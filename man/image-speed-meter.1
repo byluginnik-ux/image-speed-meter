@@ -1,0 +1,194 @@
+.TH IMAGE-SPEED-METER 1 "November 2026" "image-speed-meter 1.0.0" "User Commands"
+.SH NAME
+image-speed-meter \- measure how fast an image (or any file) downloads
+.SH SYNOPSIS
+.B image-speed-meter
+[\fIoptions\fR]
+\fIurl\fR [\fIurl\fR ...]
+.br
+.B image-speed-meter
+[\fIoptions\fR]
+\(aq\fIjson-array-of-urls\fR\(aq
+.br
+.B image-speed-meter
+[\fIoptions\fR]
+.B \-\-file
+\fIpath\fR
+.SH DESCRIPTION
+.B image-speed-meter
+makes
+.I N
+(10 by default) sequential requests to every given URL.
+Each request starts only after the previous response has been received
+completely.
+For every URL it prints the time and size of each request, then the average
+request time, the total amount of data downloaded and the download speed.
+.PP
+URLs can be passed as separate arguments, as one JSON array, or in a file.
+They are measured one after another; a failure on one URL does not stop the
+others.
+.PP
+Requests are made with
+.BR curl (1).
+In
+.B auto
+mode, a URL that curl cannot get is retried in headless Chromium
+(see
+.BR FALLBACK ).
+The last downloaded body is saved to disk unless
+.B \-\-no\-save
+is given.
+.SH OPTIONS
+.TP
+.BR \-n ", " \-\-runs " \fIN\fR"
+Number of sequential requests per URL. Default: 10.
+.TP
+.BR \-m ", " \-\-mode " \fImode\fR"
+How requests are made:
+.RS
+.TP 9
+.B auto
+curl first, headless browser if curl is blocked (default).
+.TP
+.B curl
+curl only; a browser is never started.
+.TP
+.B browser
+headless browser only.
+.RE
+.TP
+.BR \-f ", " \-\-file " \fIpath\fR"
+Read URLs from \fIpath\fR, one per line.
+Empty lines are ignored, and \(aq#\(aq starts a comment.
+URLs from the file are added after the ones on the command line.
+.TP
+.BR \-o ", " \-\-out " \fIdir\fR"
+Directory to save the downloaded file in. It is created if missing.
+Default: \fI./downloads\fR.
+The file name comes from the last part of the URL path; an extension is
+added from the Content-Type if the name has none.
+.TP
+.B \-\-no\-save
+Do not save the downloaded file.
+.TP
+.BR \-t ", " \-\-timeout " \fIsec\fR"
+Timeout for a single request, in seconds. Default: 60.
+.TP
+.B \-\-json
+Print the results as a JSON array, one object per URL, instead of text.
+No progress lines are printed.
+.TP
+.BR \-q ", " \-\-quiet
+Print only the per-URL summary, not every request.
+.TP
+.BR \-h ", " \-\-help
+Show a short help text and exit.
+.TP
+.BR \-V ", " \-\-version
+Show the version and exit.
+.SH OUTPUT
+For every request: its number, the method used, its time, its size and its
+speed.
+For every URL, a summary:
+.TP 12
+.B method
+\fBcurl\fR, \fBbrowser\fR, or \fBcurl + browser\fR if the method changed
+during the runs.
+.TP
+.B requests
+number of completed requests.
+.TP
+.B avg time
+mean request time, in seconds (s).
+.TP
+.B total data
+sum of all response bodies, in megabytes (1 MB = 1\|000\|000 bytes), with
+the exact byte count in parentheses.
+.TP
+.B speed
+total bytes divided by the total time of all requests, in MB/s and in
+Mbit/s (1 Mbit = 1\|000\|000 bits).
+.PP
+With curl, time and size are taken from curl itself
+(\fItime_total\fR and \fIsize_download\fR), so process start-up is not
+counted.
+With the browser, time is measured from navigation start until the whole
+body is available; browser start-up is not counted.
+Caching is disabled in the browser, so every run hits the network.
+.SH FALLBACK
+In
+.B auto
+mode, curl is replaced with headless Chromium for the rest of the runs of a
+URL when:
+.IP \(bu 2
+the response status is 401, 403, 429 or 503;
+.IP \(bu
+a 2xx response is an HTML page (usually an anti-bot interstitial);
+.IP \(bu
+curl itself fails (connection reset, TLS error and so on).
+.PP
+The request that triggered the fallback is not counted.
+If the browser gets an anti-bot challenge that runs scripts and then
+redirects, it waits for the redirect, then repeats that run so the measured
+time does not include the challenge.
+Chromium is started once and reused for all URLs.
+.SH ENVIRONMENT
+.TP
+.B CHROME_PATH
+Path to a Chromium or Chrome executable.
+If unset, the first of
+.BR chromium-browser ,
+.BR chromium ,
+.BR google-chrome-stable ,
+.BR google-chrome ,
+.BR chrome
+and
+.B microsoft-edge
+found in
+.B PATH
+is used, then the usual macOS and Windows install locations.
+.SH EXIT STATUS
+.TP
+.B 0
+Every URL was measured successfully.
+.TP
+.B 1
+At least one URL failed.
+.TP
+.B 2
+Invalid command-line arguments.
+.SH EXAMPLES
+Measure one image with the default 10 requests:
+.PP
+.RS
+.nf
+image-speed-meter https://upload.wikimedia.org/wikipedia/commons/3/3f/Fronalpstock_big.jpg
+.fi
+.RE
+.PP
+Five requests, browser only, without saving:
+.PP
+.RS
+.nf
+image-speed-meter \-n 5 \-\-mode browser \-\-no\-save https://example.com/photo.jpg
+.fi
+.RE
+.PP
+Several URLs as a JSON array, JSON output:
+.PP
+.RS
+.nf
+image-speed-meter \-\-json \(aq["https://a.example/1.jpg","https://b.example/2.png"]\(aq
+.fi
+.RE
+.PP
+URLs from a file, summaries only:
+.PP
+.RS
+.nf
+image-speed-meter \-q \-f urls.txt
+.fi
+.RE
+.SH SEE ALSO
+.BR curl (1),
+.BR chromium (1)

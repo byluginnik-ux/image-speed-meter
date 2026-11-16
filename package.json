@@ -1,0 +1,29 @@
+{
+  "name": "image-speed-meter",
+  "version": "1.0.0",
+  "description": "Measure download speed of an image URL: N sequential requests via curl, with a headless-browser fallback when access is blocked",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "image-speed-meter": "src/index.ts"
+  },
+  "man": [
+    "man/image-speed-meter.1"
+  ],
+  "main": "src/measure.ts",
+  "files": ["src", "man", "README.md"],
+  "engines": {
+    "bun": ">=1.1"
+  },
+  "scripts": {
+    "start": "bun src/index.ts",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "puppeteer-core": "^25.17.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "typescript": "^7.0.2"
+  }
+}
