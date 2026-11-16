@@ -1,7 +1,7 @@
 {
   "name": "image-speed-meter",
-  "version": "1.0.0",
-  "description": "Measure download speed of an image URL: N sequential requests via curl, with a headless-browser fallback when access is blocked",
+  "version": "1.1.0",
+  "description": "Measure download speed of any file: N sequential requests via curl, headless-browser fallback, HTTP auth, tokens, cookies and saved browser logins",
   "type": "module",
   "license": "MIT",
   "bin": {

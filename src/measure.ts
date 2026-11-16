@@ -2,8 +2,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { emptyAuth, readProfileSession, type Auth } from "./auth.ts";
 import { browserFetch, closeBrowser } from "./browser.ts";
-import { curlFetch } from "./curl.ts";
+import { isChallenge } from "./challenge.ts";
+import { curlFetch, USER_AGENT, type CurlResult } from "./curl.ts";
 import {
   BLOCKED_STATUSES,
   FetchError,
@@ -22,6 +24,8 @@ export interface MeasureOptions {
   timeoutSec: number;
   /** Directory for the downloaded file, or `null` to skip saving. */
   outDir: string | null;
+  /** Credentials, headers, cookies and saved login profile. */
+  auth: Auth;
   /** Progress callback for human-readable output. */
   onEvent?: (event: MeasureEvent) => void;
 }
@@ -63,27 +67,41 @@ export interface UrlReport {
   savedTo?: string;
 }
 
-export const DEFAULTS: Omit<MeasureOptions, "onEvent"> = {
+export const DEFAULTS: Omit<MeasureOptions, "onEvent" | "auth"> = {
   runs: 10,
   mode: "auto",
   timeoutSec: 60,
   outDir: "downloads",
 };
 
-/** A 2xx HTML page where binary content was expected is most likely an anti-bot interstitial. */
-function looksLikeChallengePage(r: FetchResult): boolean {
-  return r.status >= 200 && r.status < 300 && r.contentType === "text/html";
-}
-
 function isSuccess(r: FetchResult): boolean {
   return r.status >= 200 && r.status < 300;
 }
 
-/** Decides whether a curl result should be retried in the browser; returns the reason or null. */
-function fallbackReason(r: FetchResult): string | null {
-  if (BLOCKED_STATUSES.has(r.status)) return `HTTP ${r.status}`;
-  if (looksLikeChallengePage(r)) return "got an HTML page instead of a file";
+/**
+ * Decides whether a curl result should be retried in the browser; returns the reason or null.
+ * An ordinary HTML page is a valid result; only anti-bot pages trigger the fallback.
+ */
+async function fallbackReason(r: CurlResult): Promise<string | null> {
+  // 401 is an authorization problem, not bot blocking: the browser would get the same answer.
+  if (r.status !== 401 && BLOCKED_STATUSES.has(r.status)) return `HTTP ${r.status}`;
+  if (!isSuccess(r)) return null;
+  const body = r.contentType === "text/html" ? await r.sample() : undefined;
+  if (isChallenge({ contentType: r.contentType, headers: r.headers, body })) {
+    return "got an anti-bot page";
+  }
   return null;
+}
+
+/** Explains common failure statuses. */
+function statusMessage(status: number, auth: Auth): string {
+  const hasCredentials =
+    auth.user || auth.headers.length || auth.cookies.length || auth.cookieFile || auth.profile;
+  if (status === 401) {
+    return hasCredentials ? "HTTP 401 (credentials were rejected)" : "HTTP 401 (authorization required, see --user/--header/--cookie)";
+  }
+  if (status === 403 && !hasCredentials) return "HTTP 403 (access denied; the site may need authorization)";
+  return `HTTP ${status}`;
 }
 
 const EXT_BY_TYPE: Record<string, string> = {
@@ -98,6 +116,37 @@ const EXT_BY_TYPE: Record<string, string> = {
   "image/x-icon": "ico",
   "image/vnd.microsoft.icon": "ico",
   "text/html": "html",
+  "text/plain": "txt",
+  "text/csv": "csv",
+  "text/css": "css",
+  "text/xml": "xml",
+  "text/javascript": "js",
+  "application/javascript": "js",
+  "application/json": "json",
+  "application/xml": "xml",
+  "application/pdf": "pdf",
+  "application/zip": "zip",
+  "application/gzip": "gz",
+  "application/x-gzip": "gz",
+  "application/x-tar": "tar",
+  "application/x-xz": "xz",
+  "application/x-bzip2": "bz2",
+  "application/x-7z-compressed": "7z",
+  "application/vnd.rar": "rar",
+  "application/wasm": "wasm",
+  "application/x-msdownload": "exe",
+  "application/vnd.debian.binary-package": "deb",
+  "application/x-rpm": "rpm",
+  "application/x-iso9660-image": "iso",
+  "audio/mpeg": "mp3",
+  "audio/ogg": "ogg",
+  "audio/wav": "wav",
+  "audio/flac": "flac",
+  "video/mp4": "mp4",
+  "video/webm": "webm",
+  "video/quicktime": "mov",
+  "video/x-matroska": "mkv",
+  "font/woff2": "woff2",
 };
 
 /** How many times a run is repeated because its timing included an anti-bot challenge. */
@@ -105,12 +154,24 @@ const MAX_CHALLENGE_REPEATS = 2;
 
 const usedNames = new Set<string>();
 
-/** Builds a safe, unique file name from the URL path and the content type. */
-function fileNameFor(url: string, contentType: string): string {
+/**
+ * Builds a safe, unique file name: the server's Content-Disposition name first,
+ * then the last URL path segment, then the host name; an extension is added
+ * from the content type if the name has none.
+ */
+function fileNameFor(url: string, contentType: string, serverName?: string): string {
   const { hostname, pathname } = new URL(url);
-  const last = decodeURIComponent(pathname.split("/").filter(Boolean).pop() ?? "");
-  let base = (last || hostname).replace(/[^\w.-]+/g, "_").slice(0, 120) || "download";
-  if (!/\.[a-z0-9]{2,5}$/i.test(base)) {
+  let last = "";
+  try {
+    last = decodeURIComponent(pathname.split("/").filter(Boolean).pop() ?? "");
+  } catch {
+    last = pathname.split("/").filter(Boolean).pop() ?? "";
+  }
+  const fromServer = serverName?.split(/[\\/]/).pop();
+  const named = fromServer || last;
+  let base = (named || hostname).replace(/[^\w.-]+/g, "_").replace(/^\.+/, "").slice(0, 120) || "download";
+  // A bare host name such as "example.com" already "has an extension", so always add one.
+  if (!named || !/\.[a-z0-9]{2,5}$/i.test(base)) {
     base += `.${EXT_BY_TYPE[contentType] ?? "bin"}`;
   }
   let name = base;
@@ -146,7 +207,8 @@ export async function measure(
   url: string,
   options: Partial<MeasureOptions> = {},
 ): Promise<UrlReport> {
-  const opts = { ...DEFAULTS, ...options };
+  const opts = { ...DEFAULTS, auth: emptyAuth(), ...options };
+  const userAgent = (opts.auth.profile && readProfileSession(opts.auth.profile).userAgent) || USER_AGENT;
   const emit = opts.onEvent ?? (() => {});
   const tmp = mkdtempSync(join(tmpdir(), "image-speed-meter-"));
   const curlOut = join(tmp, "body");
@@ -168,21 +230,26 @@ export async function measure(
 
       if (method === "curl") {
         try {
-          result = await curlFetch(url, { outFile: curlOut, timeoutSec: opts.timeoutSec });
+          result = await curlFetch(url, {
+            outFile: curlOut,
+            timeoutSec: opts.timeoutSec,
+            auth: opts.auth,
+            userAgent,
+          });
         } catch (err) {
           if (opts.mode !== "auto") throw err;
           switchToBrowser((err as Error).message);
           run--;
           continue;
         }
-        const reason = opts.mode === "auto" ? fallbackReason(result) : null;
+        const reason = opts.mode === "auto" ? await fallbackReason(result as CurlResult) : null;
         if (reason) {
           switchToBrowser(`curl was blocked (${reason})`);
           run--;
           continue;
         }
       } else {
-        const r = await browserFetch(url, opts.timeoutSec);
+        const r = await browserFetch(url, { timeoutSec: opts.timeoutSec, auth: opts.auth });
         if (r.challenged && isSuccess(r) && challenges++ < MAX_CHALLENGE_REPEATS) {
           // The timing includes the anti-bot challenge; the cookie is set now, so repeat the run.
           emit({ type: "challenge", url });
@@ -193,10 +260,7 @@ export async function measure(
       }
 
       if (!isSuccess(result)) {
-        throw new FetchError(`HTTP ${result.status}`, result.method, result.status);
-      }
-      if (result.method === "browser" && looksLikeChallengePage(result) && opts.mode === "auto") {
-        throw new FetchError("the browser also got an HTML page instead of a file", "browser");
+        throw new FetchError(statusMessage(result.status, opts.auth), result.method, result.status);
       }
 
       if (!methods.includes(result.method)) methods.push(result.method);
@@ -227,7 +291,7 @@ export async function measure(
 
     if (opts.outDir && last) {
       await mkdir(opts.outDir, { recursive: true });
-      const target = join(opts.outDir, fileNameFor(url, last.contentType));
+      const target = join(opts.outDir, fileNameFor(url, last.contentType, last.fileName));
       await writeFile(target, await last.body());
       report.savedTo = target;
     }
@@ -237,6 +301,24 @@ export async function measure(
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+/** Moves `user:password@` out of a URL. */
+export function splitUserInfo(raw: string): { url: string; user?: Auth["user"] } {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return { url: raw };
+  }
+  if (!parsed.username && !parsed.password) return { url: raw };
+  const user = {
+    name: decodeURIComponent(parsed.username),
+    password: decodeURIComponent(parsed.password),
+  };
+  parsed.username = "";
+  parsed.password = "";
+  return { url: parsed.href, user };
 }
 
 /**
@@ -250,9 +332,14 @@ export async function measureAll(
   const urls = Array.isArray(input) ? input : [input];
   const reports: UrlReport[] = [];
   try {
-    for (const [i, url] of urls.entries()) {
+    for (const [i, rawUrl] of urls.entries()) {
+      // Credentials embedded in the URL (https://user:pass@host/) become --user for that URL
+      // and are removed from the URL, so they never show up in the output.
+      const { url, user } = splitUserInfo(rawUrl);
+      const auth = { ...emptyAuth(), ...options.auth };
+      if (user) auth.user = user;
       options.onEvent?.({ type: "start", url, index: i + 1, total: urls.length });
-      const report = await measure(url, options);
+      const report = await measure(url, { ...options, auth });
       options.onEvent?.({ type: "done", url, report });
       reports.push(report);
     }

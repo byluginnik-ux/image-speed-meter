@@ -1,6 +1,6 @@
-.TH IMAGE-SPEED-METER 1 "November 2026" "image-speed-meter 1.0.0" "User Commands"
+.TH IMAGE-SPEED-METER 1 "November 2026" "image-speed-meter 1.1.0" "User Commands"
 .SH NAME
-image-speed-meter \- measure how fast an image (or any file) downloads
+image-speed-meter \- measure how fast a file downloads
 .SH SYNOPSIS
 .B image-speed-meter
 [\fIoptions\fR]
@@ -14,6 +14,10 @@ image-speed-meter \- measure how fast an image (or any file) downloads
 [\fIoptions\fR]
 .B \-\-file
 \fIpath\fR
+.br
+.B image-speed-meter login
+\fIurl\fR
+[\fB\-\-profile\fR \fIname\fR|\fIdir\fR]
 .SH DESCRIPTION
 .B image-speed-meter
 makes
@@ -24,6 +28,8 @@ completely.
 For every URL it prints the time and size of each request, then the average
 request time, the total amount of data downloaded and the download speed.
 .PP
+Any file can be measured: images, archives, videos, PDFs, HTML pages, API
+responses.
 URLs can be passed as separate arguments, as one JSON array, or in a file.
 They are measured one after another; a failure on one URL does not stop the
 others.
@@ -35,6 +41,9 @@ In
 mode, a URL that curl cannot get is retried in headless Chromium
 (see
 .BR FALLBACK ).
+Sites that need authorization are supported through HTTP credentials,
+headers, cookies or a saved browser login (see
+.BR AUTHENTICATION ).
 The last downloaded body is saved to disk unless
 .B \-\-no\-save
 is given.
@@ -65,8 +74,9 @@ URLs from the file are added after the ones on the command line.
 .BR \-o ", " \-\-out " \fIdir\fR"
 Directory to save the downloaded file in. It is created if missing.
 Default: \fI./downloads\fR.
-The file name comes from the last part of the URL path; an extension is
-added from the Content-Type if the name has none.
+The file name comes from the server's Content-Disposition header, then the
+last part of the URL path, then the host name; an extension is added from
+the Content-Type if the name has none.
 .TP
 .B \-\-no\-save
 Do not save the downloaded file.
@@ -86,6 +96,67 @@ Show a short help text and exit.
 .TP
 .BR \-V ", " \-\-version
 Show the version and exit.
+.SS Authorization options
+.TP
+.BR \-u ", " \-\-user " \fIuser\fR[:\fIpassword\fR]"
+HTTP Basic or Digest credentials (the scheme is chosen automatically).
+Without \fI:password\fR, the password is read from
+.B IMAGE_SPEED_METER_PASSWORD
+or asked for in the terminal without echo.
+A URL of the form \fIhttps://user:password@host/\fR works the same way for
+that URL, and the credentials are removed from all output.
+.TP
+.BR \-H ", " \-\-header " \fIheader\fR"
+Add a request header such as
+\(aqAuthorization: Bearer \fItoken\fR\(aq or \(aqX-Api-Key: \fIkey\fR\(aq.
+Repeatable.
+\fB@\fIfile\fR reads headers from \fIfile\fR, one per line;
+\(aq#\(aq starts a comment.
+.TP
+.BR \-b ", " \-\-cookie " \fIname\fR=\fIvalue\fR[; \fIname\fR=\fIvalue\fR ...]"
+Send cookies to the host of each URL. Repeatable.
+.TP
+.BR \-c ", " \-\-cookie\-file " \fIpath\fR"
+Load cookies from a file in Netscape format, as written by
+.BR curl (1)
+or by browser cookie-export extensions.
+Cookies are sent only to the domains recorded in the file.
+.TP
+.BR \-p ", " \-\-profile " \fIname\fR|\fIdir\fR"
+Use a session saved with
+.BR "image-speed-meter login" .
+A value that contains a slash or starts with \(aq.\(aq or \(aq~\(aq is a
+directory; anything else is a profile name (see
+.BR FILES ).
+.SH LOGIN
+.B image-speed-meter login
+\fIurl\fR opens a visible Chromium window on \fIurl\fR with a persistent
+profile.
+Sign in there by any means the site offers (login form, SSO, two-factor
+authentication, captcha), then press Enter in the terminal.
+The cookies are written to \fIcookies.txt\fR in the profile (also every two
+seconds while the window is open), the browser's user agent is remembered,
+and the browser is closed.
+The profile name defaults to \fBdefault\fR.
+.PP
+Later runs with \fB\-\-profile\fR reuse the session: curl gets the cookie
+file and the user agent, the headless browser gets the whole profile.
+Repeat the login when the site's session expires.
+A graphical display is required.
+.SH AUTHENTICATION
+Every authorization option applies to both curl and the headless browser.
+.PP
+Credentials (\fB\-u\fR), headers (\fB\-H\fR) and cookie strings (\fB\-b\fR)
+are sent only to the host of the measured URL.
+If that host redirects to another host (for example, a file server or a CDN),
+they are not sent there.
+Domain-scoped cookies from \fB\-c\fR and \fB\-\-profile\fR follow their
+own domains.
+To guarantee this with curl, redirects are followed one hop at a time when
+any authorization option is given; the measured time is the sum of all hops.
+.PP
+An HTTP 401 response is reported as an authorization error and does not
+trigger the browser fallback, because the browser would get the same answer.
 .SH OUTPUT
 For every request: its number, the method used, its time, its size and its
 speed.
@@ -109,29 +180,54 @@ the exact byte count in parentheses.
 total bytes divided by the total time of all requests, in MB/s and in
 Mbit/s (1 Mbit = 1\|000\|000 bits).
 .PP
+Values below 1 are printed with more decimal places, so small files do not
+show up as zero.
+.PP
 With curl, time and size are taken from curl itself
 (\fItime_total\fR and \fIsize_download\fR), so process start-up is not
 counted.
-With the browser, time is measured from navigation start until the whole
-body is available; browser start-up is not counted.
-Caching is disabled in the browser, so every run hits the network.
+With the browser, every successful response is saved as a download; time is
+measured from navigation start until the last byte is on disk, and size is
+the number of bytes received.
+Browser start-up is not counted, and caching is disabled, so every run hits
+the network.
 .SH FALLBACK
 In
 .B auto
 mode, curl is replaced with headless Chromium for the rest of the runs of a
 URL when:
 .IP \(bu 2
-the response status is 401, 403, 429 or 503;
+the response status is 403, 429 or 503;
 .IP \(bu
-a 2xx response is an HTML page (usually an anti-bot interstitial);
+a 2xx response is an anti-bot page (Cloudflare, DDoS-Guard, Imperva,
+PerimeterX, DataDome and similar; detected by the \fIcf-mitigated\fR header
+and by markers in the HTML).
+An ordinary HTML page is measured with curl like any other file;
 .IP \(bu
 curl itself fails (connection reset, TLS error and so on).
 .PP
 The request that triggered the fallback is not counted.
-If the browser gets an anti-bot challenge that runs scripts and then
-redirects, it waits for the redirect, then repeats that run so the measured
-time does not include the challenge.
+If the browser gets a challenge page that runs scripts and then redirects, it
+waits for the redirect, then repeats that run so the measured time does not
+include the challenge.
 Chromium is started once and reused for all URLs.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/image-speed-meter/profiles/<name>/
+A named login profile (\fI~/.config\fR when
+.B XDG_CONFIG_HOME
+is unset). Created with mode 0700.
+.TP
+.I <profile>/cookies.txt
+Cookies exported by
+.BR login ,
+Netscape format, mode 0600.
+.TP
+.I <profile>/session.json
+The user agent of the browser that signed in.
+.TP
+.I <profile>/chromium/
+The Chromium user data directory.
 .SH ENVIRONMENT
 .TP
 .B CHROME_PATH
@@ -147,16 +243,37 @@ and
 found in
 .B PATH
 is used, then the usual macOS and Windows install locations.
+.TP
+.B IMAGE_SPEED_METER_PASSWORD
+Password for \fB\-\-user\fR when it is not given inline.
+.TP
+.B XDG_CONFIG_HOME
+Base directory for named profiles.
+.SH SECURITY
+Secrets are never passed to curl on its command line: the credentials,
+headers and cookies are written to curl's standard input as a config file
+(\fB\-\-config \-\fR).
+They are not printed in the output or in the JSON.
+.PP
+Arguments of \fBimage-speed-meter\fR itself, such as \fB\-u user:password\fR
+or \fB\-H \(aqAuthorization: ...\(aq\fR, are visible to other local users in
+the process list and are kept in the shell history.
+Prefer \fB\-u user\fR with the password prompt or
+.BR IMAGE_SPEED_METER_PASSWORD ,
+and \fB\-H @file\fR for tokens.
+.PP
+Cookie files and profiles give access to your accounts: keep them private and
+out of version control.
 .SH EXIT STATUS
 .TP
 .B 0
-Every URL was measured successfully.
+Every URL was measured successfully, or the login succeeded.
 .TP
 .B 1
-At least one URL failed.
+At least one URL failed, or the login failed.
 .TP
 .B 2
-Invalid command-line arguments.
+Invalid command-line arguments, or a password could not be obtained.
 .SH EXAMPLES
 Measure one image with the default 10 requests:
 .PP
@@ -166,11 +283,46 @@ image-speed-meter https://upload.wikimedia.org/wikipedia/commons/3/3f/Fronalpsto
 .fi
 .RE
 .PP
-Five requests, browser only, without saving:
+Three requests to a release archive, browser only:
 .PP
 .RS
 .nf
-image-speed-meter \-n 5 \-\-mode browser \-\-no\-save https://example.com/photo.jpg
+image-speed-meter \-n 3 \-\-mode browser \e
+  https://github.com/cli/cli/releases/download/v2.63.0/gh_2.63.0_linux_amd64.tar.gz
+.fi
+.RE
+.PP
+HTTP Basic or Digest authorization, asking for the password:
+.PP
+.RS
+.nf
+image-speed-meter \-u alice https://example.com/private/report.pdf
+.fi
+.RE
+.PP
+A bearer token kept in a file:
+.PP
+.RS
+.nf
+echo \(aqAuthorization: Bearer eyJhbGciOi...\(aq > token.hdr
+image-speed-meter \-H @token.hdr https://api.example.com/export.csv
+.fi
+.RE
+.PP
+Cookies exported from a browser:
+.PP
+.RS
+.nf
+image-speed-meter \-c cookies.txt https://example.com/files/big.zip
+.fi
+.RE
+.PP
+Sign in once in a real browser window, then measure with the saved session:
+.PP
+.RS
+.nf
+image-speed-meter login https://example.com/login
+image-speed-meter \-p default https://example.com/files/big.zip
 .fi
 .RE
 .PP
@@ -178,15 +330,7 @@ Several URLs as a JSON array, JSON output:
 .PP
 .RS
 .nf
-image-speed-meter \-\-json \(aq["https://a.example/1.jpg","https://b.example/2.png"]\(aq
-.fi
-.RE
-.PP
-URLs from a file, summaries only:
-.PP
-.RS
-.nf
-image-speed-meter \-q \-f urls.txt
+image-speed-meter \-\-json \(aq["https://a.example/1.jpg","https://b.example/2.zip"]\(aq
 .fi
 .RE
 .SH SEE ALSO

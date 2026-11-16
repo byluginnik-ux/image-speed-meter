@@ -15,6 +15,8 @@ export interface FetchResult {
   bytes: number;
   /** Time from sending the request until the last body byte arrived, in seconds. */
   timeSec: number;
+  /** File name suggested by the server (Content-Disposition), if any. */
+  fileName?: string;
   /** Returns the downloaded body (used to save the file). */
   body: () => Promise<Uint8Array>;
 }
@@ -36,4 +38,23 @@ export class FetchError extends Error {
 /** Strips parameters such as `; charset=utf-8` and lower-cases the media type. */
 export function normalizeContentType(raw: string | undefined | null): string {
   return (raw ?? "").split(";")[0]!.trim().toLowerCase();
+}
+
+/**
+ * Extracts the file name from a Content-Disposition header value.
+ * Supports `filename*=UTF-8''name` (RFC 5987) and `filename="name"`.
+ */
+export function fileNameFromDisposition(header: string | undefined | null): string | undefined {
+  if (!header) return undefined;
+  const extended = /filename\*\s*=\s*([^']*)'[^']*'([^;]+)/i.exec(header);
+  if (extended) {
+    try {
+      return decodeURIComponent(extended[2]!.trim().replace(/^"|"$/g, ""));
+    } catch {
+      // Malformed percent-encoding: fall through to the plain parameter.
+    }
+  }
+  const plain = /filename\s*=\s*("([^"]*)"|[^;]+)/i.exec(header);
+  const name = (plain?.[2] ?? plain?.[1])?.trim();
+  return name || undefined;
 }
