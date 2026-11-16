@@ -178,7 +178,9 @@ function parseCli(argv: string[]): CliOptions | "help" | "version" {
   };
 }
 
-const mb = (bytes: number) => (bytes / 1e6).toFixed(2);
+/** Fixed-point with more decimals for small values, so 0.035 MB does not print as 0.04 or 0.00. */
+const num = (n: number) => n.toFixed(n === 0 || n >= 100 ? 1 : n >= 1 ? 2 : 3);
+const mb = (bytes: number) => num(bytes / 1e6);
 const sec = (s: number) => s.toFixed(3);
 
 function printEvent(e: MeasureEvent, quiet: boolean): void {
@@ -199,7 +201,7 @@ function printEvent(e: MeasureEvent, quiet: boolean): void {
       const speed = r.timeSec > 0 ? r.bytes / r.timeSec / 1e6 : 0;
       console.log(
         `  #${String(e.run).padStart(width)}  ${r.method.padEnd(7)}  ${sec(r.timeSec).padStart(8)} s` +
-          `  ${mb(r.bytes).padStart(9)} MB  ${speed.toFixed(2).padStart(8)} MB/s`,
+          `  ${mb(r.bytes).padStart(9)} MB  ${num(speed).padStart(8)} MB/s`,
       );
       break;
     }
@@ -219,7 +221,7 @@ function printSummary(r: UrlReport): void {
   console.log(`  requests:    ${r.runs.length}`);
   console.log(`  avg time:    ${sec(r.avgSec)} s`);
   console.log(`  total data:  ${mb(r.totalBytes)} MB (${r.totalBytes} bytes)`);
-  console.log(`  speed:       ${r.speedMBps.toFixed(2)} MB/s (${r.speedMbps.toFixed(2)} Mbit/s)`);
+  console.log(`  speed:       ${num(r.speedMBps)} MB/s (${num(r.speedMbps)} Mbit/s)`);
   if (r.savedTo) console.log(`  saved to:    ${r.savedTo}`);
 }
 

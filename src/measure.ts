@@ -121,6 +121,8 @@ function fileNameFor(url: string, contentType: string): string {
   return name;
 }
 
+const round = (n: number, digits: number) => Number(n.toFixed(digits));
+
 function failedReport(url: string, error: string, runs: RunRecord[], methods: Method[]): UrlReport {
   return {
     url,
@@ -203,7 +205,7 @@ export async function measure(
         method: result.method,
         status: result.status,
         bytes: result.bytes,
-        timeSec: result.timeSec,
+        timeSec: round(result.timeSec, 6),
       });
       last = result;
       emit({ type: "run", url, run, runs: opts.runs, result });
@@ -216,11 +218,11 @@ export async function measure(
       ok: true,
       methods,
       runs,
-      avgSec: totalSec / runs.length,
-      totalSec,
+      avgSec: round(totalSec / runs.length, 6),
+      totalSec: round(totalSec, 6),
       totalBytes,
-      speedMBps: totalSec > 0 ? totalBytes / totalSec / 1e6 : 0,
-      speedMbps: totalSec > 0 ? (totalBytes * 8) / totalSec / 1e6 : 0,
+      speedMBps: totalSec > 0 ? round(totalBytes / totalSec / 1e6, 4) : 0,
+      speedMbps: totalSec > 0 ? round((totalBytes * 8) / totalSec / 1e6, 4) : 0,
     };
 
     if (opts.outDir && last) {
